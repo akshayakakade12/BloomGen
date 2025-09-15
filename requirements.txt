@@ -3,3 +3,4 @@ langchain-groq
 langchain-core
 PyPDF2
 python-docx
+pandas

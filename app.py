@@ -5,9 +5,12 @@ from langchain_core.prompts import ChatPromptTemplate
 import os
 import docx
 import PyPDF2
+import pandas as pd
 from io import BytesIO
 
-# --- LOGIN / LOGOUT SYSTEM ---
+# =========================
+# --- LOGIN / LOGOUT SYSTEM
+# =========================
 users = {
     "admin": {"password": "admin123", "role": "Admin"},
     "educator": {"password": "edu123", "role": "Educator"},
@@ -19,11 +22,14 @@ if "logged_in" not in st.session_state:
 if "role" not in st.session_state:
     st.session_state.role = None
 
-# --- Login Form ---
+# =========================
+# --- LOGIN PAGE
+# =========================
 if not st.session_state.logged_in:
     st.title("🌸 BloomGen - Login")
     username = st.text_input("Username")
     password = st.text_input("Password", type="password")
+
     if st.button("Login"):
         if username in users and users[username]["password"] == password:
             st.session_state.logged_in = True
@@ -33,7 +39,9 @@ if not st.session_state.logged_in:
         else:
             st.error("❌ Invalid username or password")
 
-# --- Logged-in User Dashboard ---
+# =========================
+# --- DASHBOARD
+# =========================
 else:
     st.sidebar.success(f"Logged in as {st.session_state.role}")
     if st.sidebar.button("Logout"):
@@ -50,14 +58,18 @@ else:
     else:
         st.title("🌸 BloomGen - Intelligent Question & Assignment Generator")
 
+        # ------------------------
         # Initialize LLM
+        # ------------------------
         llm = ChatGroq(
             temperature=0.5,
-            groq_api_key="your_api_key_here",  # Replace with your key
+            GROQ_API_KEY = os.getenv("GROQ_API_KEY"),  # Replace with your key
             model_name="llama3-8b-8192"
         )
 
-        # --- Helper to extract text from uploaded files ---
+        # ------------------------
+        # Helper: Extract Text
+        # ------------------------
         def extract_text_from_file(uploaded_file):
             text = ""
             if uploaded_file.name.endswith(".pdf"):
@@ -69,9 +81,16 @@ else:
                 doc = docx.Document(uploaded_file)
                 for para in doc.paragraphs:
                     text += para.text + "\n"
+            elif uploaded_file.name.endswith(".csv"):
+                df = pd.read_csv(uploaded_file)
+                text = "\n".join(df.astype(str).values.flatten())
+            elif uploaded_file.name.endswith(".txt"):
+                text = uploaded_file.read().decode("utf-8")
             return text.strip()
 
-        # --- Bloom’s Taxonomy Classifier ---
+        # ------------------------
+        # Bloom’s Taxonomy Classifier
+        # ------------------------
         def classify_blooms(question: str) -> str:
             keywords = {
                 "Remember": ["define", "list", "state", "recall"],
@@ -86,7 +105,9 @@ else:
                     return level
             return "Unclassified"
 
-        # --- Question & Assignment Generation Functions ---
+        # ------------------------
+        # Generation Functions
+        # ------------------------
         def generate_mcq_questions(subject, syllabus, num, example):
             prompt = ChatPromptTemplate.from_template(
                 f"Generate {num} multiple-choice questions for subject {subject} based on this syllabus:\n{syllabus}\n"
@@ -119,17 +140,16 @@ else:
             chain = prompt | llm | StrOutputParser()
             return chain.invoke({})
 
-        # --- Session State ---
-        if "mcq_questions" not in st.session_state:
-            st.session_state.mcq_questions = ""
-        if "short_questions" not in st.session_state:
-            st.session_state.short_questions = ""
-        if "long_questions" not in st.session_state:
-            st.session_state.long_questions = ""
-        if "assignments" not in st.session_state:
-            st.session_state.assignments = ""
+        # ------------------------
+        # Session State
+        # ------------------------
+        for key in ["mcq_questions", "short_questions", "long_questions", "assignments"]:
+            if key not in st.session_state:
+                st.session_state[key] = ""
 
-        # --- Sidebar Layout ---
+        # ------------------------
+        # Sidebar Layout
+        # ------------------------
         logo_path = "bloomgen-high-resolution-logo.png"
         if os.path.exists(logo_path):
             st.sidebar.image(logo_path, use_container_width=True)
@@ -139,70 +159,91 @@ else:
 
         subject_name = st.sidebar.text_input("Enter Subject Name")
 
-        # File Upload
         uploaded_file = st.sidebar.file_uploader("Upload Syllabus (PDF/DOCX)", type=["pdf", "docx"])
         syllabus_text = ""
         if uploaded_file is not None:
             syllabus_text = extract_text_from_file(uploaded_file)
             st.sidebar.text_area("Extracted Syllabus", syllabus_text, height=200)
 
+        # Sections
         num_mcq = st.sidebar.slider("Number of MCQs", 0, 50, 5)
         example_mcq = st.sidebar.text_area("Example MCQ format")
+        mcq_file = st.file_uploader("Or upload MCQ file", type=["txt", "csv", "docx", "pdf"], key="mcq")
 
-        num_short = st.sidebar.slider("Number of short answer questions", 0, 50, 5)
-        example_short = st.sidebar.text_area("Example short answer question")
+        num_short = st.sidebar.slider("Number of Short Questions", 0, 50, 5)
+        example_short = st.sidebar.text_area("Example Short Question")
+        short_file = st.file_uploader("Or upload Short Question file", type=["txt", "csv", "docx", "pdf"], key="short")
 
-        num_long = st.sidebar.slider("Number of long answer questions", 0, 50, 3)
-        example_long = st.sidebar.text_area("Example long answer question")
+        num_long = st.sidebar.slider("Number of Long Questions", 0, 50, 3)
+        example_long = st.sidebar.text_area("Example Long Question")
+        long_file = st.file_uploader("Or upload Long Question file", type=["txt", "csv", "docx", "pdf"], key="long")
 
         num_assignments = st.sidebar.slider("Number of Assignments", 0, 20, 3)
         example_assignment = st.sidebar.text_area("Example Assignment format")
+        assignment_file = st.file_uploader("Or upload Assignment file", type=["txt", "csv", "docx", "pdf"], key="assignment")
 
-        # --- Generate MCQs ---
+        # ------------------------
+        # Generate Sections
+        # ------------------------
         if st.sidebar.button("Generate MCQ Questions"):
-            if subject_name and syllabus_text and example_mcq:
+            if mcq_file:
+                st.session_state.mcq_questions = extract_text_from_file(mcq_file)
+            elif subject_name and syllabus_text and example_mcq:
                 st.session_state.mcq_questions = generate_mcq_questions(subject_name, syllabus_text, num_mcq, example_mcq)
+
+            if st.session_state.mcq_questions:
                 st.header("Generated MCQ Questions")
                 for q in st.session_state.mcq_questions.split("\n"):
                     if q.strip():
                         st.write(f"**{q}** → {classify_blooms(q)}")
             else:
-                st.sidebar.warning("❗ Please upload syllabus and fill details")
+                st.sidebar.warning("❗ Provide MCQ file or details to generate")
 
-        # --- Generate Short Questions ---
         if st.sidebar.button("Generate Short Answer Questions"):
-            if subject_name and syllabus_text and example_short:
+            if short_file:
+                st.session_state.short_questions = extract_text_from_file(short_file)
+            elif subject_name and syllabus_text and example_short:
                 st.session_state.short_questions = generate_short_questions(subject_name, syllabus_text, num_short, example_short)
+
+            if st.session_state.short_questions:
                 st.header("Generated Short Answer Questions")
                 for q in st.session_state.short_questions.split("\n"):
                     if q.strip():
                         st.write(f"**{q}** → {classify_blooms(q)}")
             else:
-                st.sidebar.warning("❗ Please upload syllabus and fill details")
+                st.sidebar.warning("❗ Provide Short Answer file or details to generate")
 
-        # --- Generate Long Questions ---
         if st.sidebar.button("Generate Long Answer Questions"):
-            if subject_name and syllabus_text and example_long:
+            if long_file:
+                st.session_state.long_questions = extract_text_from_file(long_file)
+            elif subject_name and syllabus_text and example_long:
                 st.session_state.long_questions = generate_long_questions(subject_name, syllabus_text, num_long, example_long)
+
+            if st.session_state.long_questions:
                 st.header("Generated Long Answer Questions")
                 for q in st.session_state.long_questions.split("\n"):
                     if q.strip():
                         st.write(f"**{q}** → {classify_blooms(q)}")
             else:
-                st.sidebar.warning("❗ Please upload syllabus and fill details")
+                st.sidebar.warning("❗ Provide Long Answer file or details to generate")
 
-        # --- Generate Assignments ---
         if st.sidebar.button("Generate Assignments"):
-            if subject_name and syllabus_text and example_assignment:
+            if assignment_file:
+                st.session_state.assignments = extract_text_from_file(assignment_file)
+            elif subject_name and syllabus_text and example_assignment:
                 st.session_state.assignments = generate_assignments(subject_name, syllabus_text, num_assignments, example_assignment)
+
+            if st.session_state.assignments:
                 st.header("Generated Assignments")
                 for a in st.session_state.assignments.split("\n"):
                     if a.strip():
                         st.write(f"**{a}**")
             else:
-                st.sidebar.warning("❗ Please upload syllabus and fill details")
+                st.sidebar.warning("❗ Provide Assignment file or details to generate")
 
-        # --- Download as DOCX ---
+        # ------------------------
+        # Download as DOCX
+        # ------------------------
         if st.session_state.mcq_questions or st.session_state.short_questions or st.session_state.long_questions or st.session_state.assignments:
             doc = docx.Document()
             doc.add_heading("Generated Questions & Assignments", 0)
