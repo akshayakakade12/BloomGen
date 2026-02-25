@@ -141,15 +141,16 @@ SYLLABUS:
         prompt = ChatPromptTemplate.from_template("""
 You are an academic question paper setter.
 
-Generate {count} university-level descriptive questions.
+Generate exactly {count} university-level descriptive questions.
 
 Subject: {subject}
 
-Important rules:
-- Use ONLY the syllabus summary below.
-- Each question must be ONE line.
-- No numbering (no Q1/Q2), no answers, no extra text.
-- Keep questions concise and exam oriented.
+STRICT OUTPUT RULES (must follow):
+- Output ONLY questions.
+- One question per line.
+- No numbering (no Q1/Q2), no bullets, no headings.
+- No blank lines.
+- Each question should start with an action verb like: Explain/Describe/Analyze/Evaluate/Compare/Design/Implement.
 
 Syllabus Summary:
 {syllabus}
@@ -279,7 +280,11 @@ Syllabus Summary:
                 questions_list.append(q)
 
         today = datetime.date.today()
-
+        # Ensure exact number of questions
+questions_list = questions_list[:question_count]
+while len(questions_list) < question_count:
+    questions_list.append("Explain a relevant concept from the given syllabus.")
+        
         data = {
             "{{DEPARTMENT}}": department,
             "{{SEMESTER}}": semester,
