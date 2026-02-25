@@ -1,16 +1,20 @@
 import streamlit as st
 from langchain_groq import ChatGroq
-from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.output_parsers import StrOutputParser
 import os
 import docx
 import PyPDF2
-import pandas as pd
-from io import BytesIO
+from docx import Document
+import datetime
+from dotenv import load_dotenv
+
+load_dotenv()
 
 # =========================
-# --- LOGIN / LOGOUT SYSTEM
+# LOGIN SYSTEM
 # =========================
+
 users = {
     "admin": {"password": "admin123", "role": "Admin"},
     "educator": {"password": "edu123", "role": "Educator"},
@@ -19,266 +23,247 @@ users = {
 
 if "logged_in" not in st.session_state:
     st.session_state.logged_in = False
+
 if "role" not in st.session_state:
     st.session_state.role = None
 
 # =========================
-# --- LOGIN PAGE
+# LOGIN PAGE
 # =========================
+
 if not st.session_state.logged_in:
+
     st.title("🌸 BloomGen - Login")
+
     username = st.text_input("Username")
     password = st.text_input("Password", type="password")
 
     if st.button("Login"):
+
         if username in users and users[username]["password"] == password:
+
             st.session_state.logged_in = True
             st.session_state.role = users[username]["role"]
-            st.success(f"✅ Logged in as {st.session_state.role}")
-            st.stop()
+
+            st.success(f"Logged in as {st.session_state.role}")
+            st.rerun()
+
         else:
-            st.error("❌ Invalid username or password")
+            st.error("Invalid credentials")
 
 # =========================
-# --- DASHBOARD
+# DASHBOARD
 # =========================
+
 else:
+
+    st.title("🌸 BloomGen - AI University Assignment Generator")
+
     st.sidebar.success(f"Logged in as {st.session_state.role}")
+
     if st.sidebar.button("Logout"):
         st.session_state.logged_in = False
         st.session_state.role = None
-        st.stop()
+        st.rerun()
 
-    # --- Admin Dashboard ---
-    if st.session_state.role == "Admin":
-        st.header("👑 Admin Dashboard")
-        st.write("Manage users, monitor activity, etc.")
+    # =========================
+    # LLM Setup
+    # =========================
 
-    # --- Educator & Student Dashboard ---
-    else:
-        st.title("🌸 BloomGen - Intelligent Question & Assignment Generator")
+    llm = ChatGroq(
+    groq_api_key=os.getenv("GROQ_API_KEY"),
+     model_name="openai/gpt-oss-120b",
+    temperature=0.7
+)
 
-        # ------------------------
-        # Initialize LLM
-        # ------------------------
-        llm = ChatGroq(
-            temperature=0.5,
-            GROQ_API_KEY = os.getenv("GROQ_API_KEY"),  # Replace with your key
-            model_name="llama3-8b-8192"
-        )
+    # =========================
+    # File Text Extraction
+    # =========================
 
-        # ------------------------
-        # Helper: Extract Text
-        # ------------------------
-        def extract_text_from_file(uploaded_file):
-            text = ""
-            if uploaded_file.name.endswith(".pdf"):
-                reader = PyPDF2.PdfReader(uploaded_file)
-                for page in reader.pages:
-                    if page.extract_text():
-                        text += page.extract_text() + "\n"
-            elif uploaded_file.name.endswith(".docx"):
-                doc = docx.Document(uploaded_file)
-                for para in doc.paragraphs:
-                    text += para.text + "\n"
-            elif uploaded_file.name.endswith(".csv"):
-                df = pd.read_csv(uploaded_file)
-                text = "\n".join(df.astype(str).values.flatten())
-            elif uploaded_file.name.endswith(".txt"):
-                text = uploaded_file.read().decode("utf-8")
-            return text.strip()
+    def extract_text(uploaded_file):
 
-        # ------------------------
-        # Bloom’s Taxonomy Classifier
-        # ------------------------
-        def classify_blooms(question: str) -> str:
-            keywords = {
-                "Remember": ["define", "list", "state", "recall"],
-                "Understand": ["explain", "summarize", "describe"],
-                "Apply": ["solve", "use", "demonstrate"],
-                "Analyze": ["compare", "differentiate", "examine"],
-                "Evaluate": ["assess", "justify", "criticize"],
-                "Create": ["design", "formulate", "construct"]
-            }
-            for level, words in keywords.items():
-                if any(word in question.lower() for word in words):
-                    return level
-            return "Unclassified"
+        text = ""
 
-        # ------------------------
-        # Generation Functions
-        # ------------------------
-        def generate_mcq_questions(subject, syllabus, num, example):
-            prompt = ChatPromptTemplate.from_template(
-                f"Generate {num} multiple-choice questions for subject {subject} based on this syllabus:\n{syllabus}\n"
-                f"Use this as an example format: {example}\n"
+        if uploaded_file is None:
+            return text
+
+        filename = uploaded_file.name.lower()
+
+        if filename.endswith(".pdf"):
+
+            reader = PyPDF2.PdfReader(uploaded_file)
+
+            for page in reader.pages:
+                if page.extract_text():
+                    text += page.extract_text() + "\n"
+
+        elif filename.endswith(".docx"):
+
+            doc = docx.Document(uploaded_file)
+
+            for para in doc.paragraphs:
+                text += para.text + "\n"
+
+        return text
+
+    # =========================
+    # Question Generator
+    # =========================
+
+    def generate_questions(subject, syllabus, count):
+
+        prompt = ChatPromptTemplate.from_template("""
+        You are an academic question paper setter.
+
+        Generate {count} university-level descriptive questions.
+
+        Subject: {subject}
+
+        Syllabus:
+        {syllabus}
+
+        Each question should be on a new line.
+        """)
+
+        chain = prompt | llm | StrOutputParser()
+
+        return chain.invoke({
+            "subject": subject,
+            "syllabus": syllabus,
+            "count": count
+        })
+
+    # =========================
+    # Bloom Classifier
+    # =========================
+
+    def classify_blooms(question):
+
+        keywords = {
+            "Remember": ["define", "list", "state", "name"],
+            "Understand": ["explain", "describe", "summarize"],
+            "Apply": ["solve", "demonstrate", "implement"],
+            "Analyze": ["analyze", "compare", "differentiate"],
+            "Evaluate": ["evaluate", "justify", "argue"],
+            "Create": ["design", "develop", "construct"]
+        }
+
+        q_lower = question.lower()
+
+        for level, words in keywords.items():
+            if any(word in q_lower for word in words):
+                return level
+
+        return "Understand"
+
+    # =========================
+    # DOCX Generator
+    # =========================
+
+    def generate_university_docx(data_dict, questions_list):
+
+        BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+        template_path = os.path.join(BASE_DIR, "templates", "assignment_template.docx")
+
+        doc = Document(template_path)
+
+        for paragraph in doc.paragraphs:
+            for key, value in data_dict.items():
+                paragraph.text = paragraph.text.replace(key, str(value))
+
+        question_table = None
+
+        for table in doc.tables:
+            if table.rows and "Question No." in table.rows[0].cells[0].text:
+                question_table = table
+                break
+
+        if question_table:
+
+            q_no = 1
+
+            for q in questions_list:
+
+                q = q.strip()
+                if not q:
+                    continue
+
+                row = question_table.add_row().cells
+
+                row[0].text = f"Q{q_no}"
+                row[1].text = q
+                row[2].text = "3"
+                row[3].text = "1,2"
+                row[4].text = classify_blooms(q)
+                row[5].text = "05"
+
+                q_no += 1
+
+        output_path = os.path.join(BASE_DIR, "University_Assignment.docx")
+        doc.save(output_path)
+
+        return output_path
+
+    # =========================
+    # Sidebar Inputs
+    # =========================
+
+    st.sidebar.header("Assignment Details")
+
+    subject = st.sidebar.text_input("Subject")
+    department = st.sidebar.text_input("Department", "CSE")
+    semester = st.sidebar.text_input("Semester", "VIII")
+    academic_year = st.sidebar.text_input("Academic Year", "2025-26")
+    year_div = st.sidebar.text_input("Year & Div", "B.TECH")
+    assignment_no = st.sidebar.text_input("Assignment No", "03")
+    teacher_name = st.sidebar.text_input("Teacher Name")
+    max_marks = st.sidebar.text_input("Max Marks", "60")
+    question_count = st.sidebar.slider("Number of Questions", 1, 20, 5)
+
+    uploaded_file = st.file_uploader("Upload Syllabus (PDF/DOCX)")
+
+    # =========================
+    # Generate Button
+    # =========================
+
+    if uploaded_file and st.button("🚀 Generate & Format Assignment"):
+
+        syllabus_text = extract_text(uploaded_file)
+
+        if not subject:
+            st.error("Please enter subject name")
+            st.stop()
+
+        with st.spinner("Generating questions..."):
+            questions_raw = generate_questions(
+                subject,
+                syllabus_text,
+                question_count
             )
-            chain = prompt | llm | StrOutputParser()
-            return chain.invoke({})
 
-        def generate_short_questions(subject, syllabus, num, example):
-            prompt = ChatPromptTemplate.from_template(
-                f"Generate {num} short answer questions for subject {subject} based on this syllabus:\n{syllabus}\n"
-                f"Use this as an example format: {example}\n"
-            )
-            chain = prompt | llm | StrOutputParser()
-            return chain.invoke({})
+        questions_list = [q for q in questions_raw.split("\n") if q.strip()]
 
-        def generate_long_questions(subject, syllabus, num, example):
-            prompt = ChatPromptTemplate.from_template(
-                f"Generate {num} long answer questions for subject {subject} based on this syllabus:\n{syllabus}\n"
-                f"Use this as an example format: {example}\n"
-            )
-            chain = prompt | llm | StrOutputParser()
-            return chain.invoke({})
+        today = datetime.date.today()
 
-        def generate_assignments(subject, syllabus, num, example):
-            prompt = ChatPromptTemplate.from_template(
-                f"Generate {num} assignments/tasks for subject {subject} based on this syllabus:\n{syllabus}\n"
-                f"Use this as an example format: {example}\n"
-            )
-            chain = prompt | llm | StrOutputParser()
-            return chain.invoke({})
+        data = {
+            "{{DEPARTMENT}}": department,
+            "{{SEMESTER}}": semester,
+            "{{ACADEMIC_YEAR}}": academic_year,
+            "{{YEAR_DIV}}": year_div,
+            "{{MAX_MARKS}}": max_marks,
+            "{{SUBJECT}}": subject,
+            "{{ASSIGNMENT_NO}}": assignment_no,
+            "{{TEACHER_NAME}}": teacher_name,
+            "{{DATE}}": today,
+            "{{SUBMISSION_DATE}}": today
+        }
 
-        # ------------------------
-        # Session State
-        # ------------------------
-        for key in ["mcq_questions", "short_questions", "long_questions", "assignments"]:
-            if key not in st.session_state:
-                st.session_state[key] = ""
+        file_path = generate_university_docx(data, questions_list)
 
-        # ------------------------
-        # Sidebar Layout
-        # ------------------------
-        logo_path = "bloomgen-high-resolution-logo.png"
-        if os.path.exists(logo_path):
-            st.sidebar.image(logo_path, use_container_width=True)
-        else:
-            st.sidebar.write("🌸 BloomGen")
-        st.sidebar.header("Input Details")
-
-        subject_name = st.sidebar.text_input("Enter Subject Name")
-
-        uploaded_file = st.sidebar.file_uploader("Upload Syllabus (PDF/DOCX)", type=["pdf", "docx"])
-        syllabus_text = ""
-        if uploaded_file is not None:
-            syllabus_text = extract_text_from_file(uploaded_file)
-            st.sidebar.text_area("Extracted Syllabus", syllabus_text, height=200)
-
-        # Sections
-        num_mcq = st.sidebar.slider("Number of MCQs", 0, 50, 5)
-        example_mcq = st.sidebar.text_area("Example MCQ format")
-        mcq_file = st.file_uploader("Or upload MCQ file", type=["txt", "csv", "docx", "pdf"], key="mcq")
-
-        num_short = st.sidebar.slider("Number of Short Questions", 0, 50, 5)
-        example_short = st.sidebar.text_area("Example Short Question")
-        short_file = st.file_uploader("Or upload Short Question file", type=["txt", "csv", "docx", "pdf"], key="short")
-
-        num_long = st.sidebar.slider("Number of Long Questions", 0, 50, 3)
-        example_long = st.sidebar.text_area("Example Long Question")
-        long_file = st.file_uploader("Or upload Long Question file", type=["txt", "csv", "docx", "pdf"], key="long")
-
-        num_assignments = st.sidebar.slider("Number of Assignments", 0, 20, 3)
-        example_assignment = st.sidebar.text_area("Example Assignment format")
-        assignment_file = st.file_uploader("Or upload Assignment file", type=["txt", "csv", "docx", "pdf"], key="assignment")
-
-        # ------------------------
-        # Generate Sections
-        # ------------------------
-        if st.sidebar.button("Generate MCQ Questions"):
-            if mcq_file:
-                st.session_state.mcq_questions = extract_text_from_file(mcq_file)
-            elif subject_name and syllabus_text and example_mcq:
-                st.session_state.mcq_questions = generate_mcq_questions(subject_name, syllabus_text, num_mcq, example_mcq)
-
-            if st.session_state.mcq_questions:
-                st.header("Generated MCQ Questions")
-                for q in st.session_state.mcq_questions.split("\n"):
-                    if q.strip():
-                        st.write(f"**{q}** → {classify_blooms(q)}")
-            else:
-                st.sidebar.warning("❗ Provide MCQ file or details to generate")
-
-        if st.sidebar.button("Generate Short Answer Questions"):
-            if short_file:
-                st.session_state.short_questions = extract_text_from_file(short_file)
-            elif subject_name and syllabus_text and example_short:
-                st.session_state.short_questions = generate_short_questions(subject_name, syllabus_text, num_short, example_short)
-
-            if st.session_state.short_questions:
-                st.header("Generated Short Answer Questions")
-                for q in st.session_state.short_questions.split("\n"):
-                    if q.strip():
-                        st.write(f"**{q}** → {classify_blooms(q)}")
-            else:
-                st.sidebar.warning("❗ Provide Short Answer file or details to generate")
-
-        if st.sidebar.button("Generate Long Answer Questions"):
-            if long_file:
-                st.session_state.long_questions = extract_text_from_file(long_file)
-            elif subject_name and syllabus_text and example_long:
-                st.session_state.long_questions = generate_long_questions(subject_name, syllabus_text, num_long, example_long)
-
-            if st.session_state.long_questions:
-                st.header("Generated Long Answer Questions")
-                for q in st.session_state.long_questions.split("\n"):
-                    if q.strip():
-                        st.write(f"**{q}** → {classify_blooms(q)}")
-            else:
-                st.sidebar.warning("❗ Provide Long Answer file or details to generate")
-
-        if st.sidebar.button("Generate Assignments"):
-            if assignment_file:
-                st.session_state.assignments = extract_text_from_file(assignment_file)
-            elif subject_name and syllabus_text and example_assignment:
-                st.session_state.assignments = generate_assignments(subject_name, syllabus_text, num_assignments, example_assignment)
-
-            if st.session_state.assignments:
-                st.header("Generated Assignments")
-                for a in st.session_state.assignments.split("\n"):
-                    if a.strip():
-                        st.write(f"**{a}**")
-            else:
-                st.sidebar.warning("❗ Provide Assignment file or details to generate")
-
-        # ------------------------
-        # Download as DOCX
-        # ------------------------
-        if st.session_state.mcq_questions or st.session_state.short_questions or st.session_state.long_questions or st.session_state.assignments:
-            doc = docx.Document()
-            doc.add_heading("Generated Questions & Assignments", 0)
-
-            if st.session_state.mcq_questions:
-                doc.add_heading("MCQs", level=1)
-                for q in st.session_state.mcq_questions.split("\n"):
-                    if q.strip():
-                        doc.add_paragraph(f"{q} → {classify_blooms(q)}")
-
-            if st.session_state.short_questions:
-                doc.add_heading("Short Answer Questions", level=1)
-                for q in st.session_state.short_questions.split("\n"):
-                    if q.strip():
-                        doc.add_paragraph(f"{q} → {classify_blooms(q)}")
-
-            if st.session_state.long_questions:
-                doc.add_heading("Long Answer Questions", level=1)
-                for q in st.session_state.long_questions.split("\n"):
-                    if q.strip():
-                        doc.add_paragraph(f"{q} → {classify_blooms(q)}")
-
-            if st.session_state.assignments:
-                doc.add_heading("Assignments", level=1)
-                for a in st.session_state.assignments.split("\n"):
-                    if a.strip():
-                        doc.add_paragraph(a)
-
-            buffer = BytesIO()
-            doc.save(buffer)
-            buffer.seek(0)
-
+        with open(file_path, "rb") as f:
             st.download_button(
-                label="📥 Download Questions & Assignments as DOCX",
-                data=buffer,
-                file_name="generated_content.docx",
+                label="⬇ Download University Assignment",
+                data=f,
+                file_name="University_Assignment.docx",
                 mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
             )
